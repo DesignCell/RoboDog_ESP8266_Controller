@@ -2,14 +2,10 @@
   Name: RoboDog_Controller
 	Description: ESP8266 Wifi Controller for RoboDog
   Created:	2021.05.21
-	Revised:	  
-  Author:     DesignCell
+	Revised:	2021.06.20
+  Author:   DesignCell (Jeff Underly)
 
 */
-
-//#define BLYNK_PRINT Serial // Defines the object that is used for printing
-//#define BLYNK_DEBUG        // Optional, this enables more detailed prints
-//#define BLYNK_MSG_LIMIT      100
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -18,22 +14,20 @@
 #include <ESP8266WiFi.h>
 #include <BlynkSimpleEsp8266.h>
 
-
-
-
 #define I2C_ADDR_FRONT 0
 #define I2C_ADDR_REAR 2
 
+#define SERIAL_DEBUG
 
 // You should get Auth Token in the Blynk App.
 // Go to the Project Settings (nut icon).
-char auth[] = "TOKEN"; // RoboDog
+char auth[] = "GinyQKPRF1erjmoWGb6H-FU73tI-NSlB"; // RoboDog
 bool isFirstConnect = true;
 uint8_t blynk_cnt = 1;
 // Your WiFi credentials.
 // Set password to "" for open networks.
-char ssid[] = "WIFI_SSID";
-char pass[] = "WIFI_PASSWORD";
+char ssid[] = "NetCell";
+char pass[] = "Sveny;The100%BrownBeaner";
 
 // Declarations
 float Len_Length = 312.00; //mm
@@ -44,12 +38,16 @@ float Len_Lower = 165.00; //mm
 bool Btn_Stop = 0; //V0
 bool Btn_State = 0; //V1
 float SPEED; //V2
-float Joy_X; //V5 +/-500
-float Joy_Y; //V6 +/-500
-float Joy_ZZ;//V7 +/-500
-float Joy_Z; //V8 +/-500
+int8_t Spd_PWM; //V3
+float Joy_X; //V5 +/-1000
+float Joy_Y; //V6 +/-1000
+float Joy_ZZ;//V7 +/-1000
+float Joy_Z; //V8 200-300
 uint8_t Lift_Z; //V9 0-60
-uint8_t Off_Lim; //V16 0-60
+uint8_t Kp;     //V10 0-255
+uint8_t Ki;     //V11
+uint8_t Kd;     //V12
+uint8_t Offset_limit; //V16 0-60
 uint8_t Off_Lift; //V17 0-60
 
 float Off_X = 0;
@@ -81,27 +79,32 @@ uint8_t Flag_1 = 2;
 uint8_t Flag_2 = 2;
 uint8_t Flag_3 = 2;
 uint8_t Flag_4 = 2;
-int Leg_Active = 1;
+uint8_t balance = 0;
+float lean = 0;
+int Leg_Active = 0;
 int Leg_Is_Active = 0;
 uint32_t Lift_Millis;
 
 // Position Interval
 uint32_t Pos_pMicros = 0;
-uint8_t Pos_Hz = 50; //Hz :: 50Hz = 20,000us, 75Hz = 13,333us
+uint8_t Pos_Hz = 75; //Hz :: 50Hz = 20,000us, 75Hz = 13,333us
 uint32_t Pos_Interval = 1000000/Pos_Hz; //Microsecond method interval 
 uint32_t Loop_time; // Loop time debug observation
+uint32_t STM_Loop_Time[3]; // [0] & [2]
+
 
 
 void setup() 
 {
   // Debug console
+  #ifdef SERIAL_DEBUG
   Serial.begin(250000);
+  #endif
 
   Blynk.begin(auth, ssid, pass, IPAddress(192,168,0,8), 8080);
 
   Wire.begin();
   //Wire.setClock(400000L); //fast clock
-
 
   delay(500);
 }
@@ -109,7 +112,8 @@ void setup()
 BLYNK_CONNECTED() // This function will run every time Blynk initial connection is established
 {
   if (isFirstConnect) {
-    Blynk.virtualWrite(V0,0); // Reset E-Stop
+    Blynk.virtualWrite(V0,0); // Reset E-Stop 
+    Blynk.virtualWrite(V1,0); // Reset Enabled State
     Blynk.syncAll();
     isFirstConnect = false;
 
@@ -123,6 +127,56 @@ BLYNK_CONNECTED() // This function will run every time Blynk initial connection 
 void Serial_Print()
 {
 	char sPrint[150];
+  uint32_t  numI0 = STM_Loop_Time[0];
+  uint32_t  numI2 = STM_Loop_Time[2];
+  uint8_t   num000 = Leg_Active;
+  uint8_t   num001 = Leg_Is_Active;
+  uint8_t   num01 = Flag_1;
+  uint8_t   num02 = Flag_2;
+  uint8_t   num03 = Flag_3;
+  uint8_t   num04 = Flag_4;
+	int16_t 	num1X = Foot_Off_X[0];
+	int16_t 	num1Y = Foot_Off_Y[0];
+	int16_t 	num1Z = Foot_Off_Z[0];
+  int16_t 	num1S = Leg_Angle_Setpoint_Shoulder[0];
+  int16_t 	num1U = Leg_Angle_Setpoint_Upper[0];
+  int16_t 	num1L = Leg_Angle_Setpoint_Lower[0]; 
+  int16_t 	num2X = Foot_Off_X[1];
+	int16_t 	num2Y = Foot_Off_Y[1];
+	int16_t 	num2Z = Foot_Off_Z[1];
+  int16_t 	num2S = Leg_Angle_Setpoint_Shoulder[1];
+  int16_t 	num2U = Leg_Angle_Setpoint_Upper[1];
+  int16_t 	num2L = Leg_Angle_Setpoint_Lower[1]; 
+  int16_t 	num3X = Foot_Off_X[2];
+	int16_t 	num3Y = Foot_Off_Y[2];
+	int16_t 	num3Z = Foot_Off_Z[2];
+  int16_t 	num3S = Leg_Angle_Setpoint_Shoulder[2];
+  int16_t 	num3U = Leg_Angle_Setpoint_Upper[2];
+  int16_t 	num3L = Leg_Angle_Setpoint_Lower[2]; 
+  int16_t 	num4X = Foot_Off_X[3];
+	int16_t 	num4Y = Foot_Off_Y[3];
+	int16_t 	num4Z = Foot_Off_Z[3];
+  int16_t 	num4S = Leg_Angle_Setpoint_Shoulder[3];
+  int16_t 	num4U = Leg_Angle_Setpoint_Upper[3];
+  int16_t 	num4L = Leg_Angle_Setpoint_Lower[3]; 
+
+
+	sprintf(sPrint, "%d, %d, %d%d %d%d%d%d : %d,%d,%d, %d,%d,%d :: %d,%d,%d, %d,%d,%d :: %d,%d,%d, %d,%d,%d :: %d,%d,%d, %d,%d,%d", 
+    numI0,numI2,num000,num001,num01,num02,num03,num04,
+    num1X,num1Y,num1Z,num1S,num1U,num1L,
+    num2X,num2Y,num2Z,num2S,num2U,num2L,
+    num3X,num3Y,num3Z,num3S,num3U,num3L,
+    num4X,num4Y,num4Z,num4S,num4U,num4L);
+
+
+	//Print
+	Serial.println(sPrint);
+ 
+}
+
+void Serial_Print__()
+{
+	char sPrint[150];
   uint16_t  num1 = Loop_time;
 	int16_t 	num2 = Flag_1;  
 	int16_t 	num3 = Foot_Off_X[0];
@@ -134,7 +188,33 @@ void Serial_Print()
   int16_t 	num9 = Leg_Angle_Measured_Shoulder[0];
   int16_t 	num10 =Leg_Angle_Measured_Upper[0];
 
-	sprintf(sPrint, "%d, %d, %d, %d, %d, %d, %d, %d, %d, %d", num1, num2, num3, num4, num5, num6, num7, num8, num9, num10);
+	sprintf(sPrint, "%d, %d, X%d, Y%d, Z%d, S%d, U%d, L%d, %d, %d", num1, num2, num3, num4, num5, num6, num7, num8, num9, num10);
+
+
+	//Print
+	Serial.println(sPrint);
+ 
+}
+
+void Serial_Print_()
+{
+	char sPrint[150];
+  uint16_t  num1 = Loop_time;
+	int16_t 	num2 = Flag_1;  
+	int16_t 	num3 = Leg_Angle_Measured_Shoulder[0];
+	int16_t 	num4 = Leg_Angle_Measured_Upper[0];
+	int16_t 	num5 = Leg_Angle_Measured_Lower[0];
+  int16_t 	num6 = Leg_Angle_Measured_Shoulder[1];
+  int16_t 	num7 = Leg_Angle_Measured_Upper[1];
+  int16_t 	num8 = Leg_Angle_Measured_Lower[1];
+	int16_t 	num9 = Leg_Angle_Measured_Shoulder[2];
+	int16_t 	num10 = Leg_Angle_Measured_Upper[2];
+	int16_t 	num11 = Leg_Angle_Measured_Lower[2];
+  int16_t 	num12 = Leg_Angle_Measured_Shoulder[3];
+  int16_t 	num13 = Leg_Angle_Measured_Upper[3];
+  int16_t 	num14 = Leg_Angle_Measured_Lower[3];
+
+	sprintf(sPrint, "%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d", num1, num2, num3, num4, num5, num6, num7, num8, num9, num10, num11, num12, num13, num14);
 
 
 	//Print
@@ -157,7 +237,7 @@ BLYNK_WRITE(V2)
 }
 BLYNK_WRITE(V3)
 {
-  //UNUSED = param.asInt();
+  lean = param.asInt();
 }
 BLYNK_WRITE(V4)
 {
@@ -183,9 +263,21 @@ BLYNK_WRITE(V9)
 {
   Lift_Z = param.asInt();
 }
+BLYNK_WRITE(V10)
+{
+  Kp = param.asInt();
+}
+BLYNK_WRITE(V11)
+{
+  Ki = param.asInt();
+}
+BLYNK_WRITE(V12)
+{
+  Kd = param.asInt();
+}
 BLYNK_WRITE(V16)
 {
-  Off_Lim = param.asInt();
+  Offset_limit = param.asInt();
 }
 BLYNK_WRITE(V17)
 {
@@ -201,6 +293,14 @@ BLYNK_WRITE(V17)
   Foot_Off_Z[1] = Off_Z;
   Foot_Off_Z[2] = Off_Z;
   Foot_Off_Z[3] = Off_Z;
+
+  Leg_Active = 0;
+  Leg_Is_Active = 0;
+  balance = 0;
+  Flag_1 = 2;
+  Flag_2 = 2;
+  Flag_3 = 2;
+  Flag_4 = 2;
 }
 BLYNK_WRITE(V18)
 {
@@ -213,20 +313,22 @@ BLYNK_WRITE(V19)
 
 void Offsets()
 {
-  // *******************************************  mm/s adder here
-  Off_X = Joy_X * (1 / SPEED);
-  Off_Y = Joy_Y * (1 / SPEED);
-  Off_ZZ = Joy_ZZ * (1 / SPEED);
+  // Speed in mm/s through Hz multiplied by Joy precentage added to Offset.
+  Off_X = Joy_X / 1000.0 * SPEED / Pos_Hz;
+  Off_Y = Joy_Y / 1000.0 * SPEED / Pos_Hz;
+  Off_ZZ = Joy_ZZ / 1000.0 * SPEED / Pos_Hz;
 
+  /*
   Foot_Off_Z[0] = Off_Z;
   Foot_Off_Z[1] = Off_Z;
   Foot_Off_Z[2] = Off_Z;
   Foot_Off_Z[3] = Off_Z;
+  */
 }
 
 bool Offsets_Limit(float X,float Y)
 {
-  if (sqrt(pow(X,2) + pow(Y,2)) < Off_Lim)
+  if (sqrt(pow(X,2) + pow(Y,2)) < Offset_limit)
   {
     return true;
   } else
@@ -287,29 +389,29 @@ void Offsets_ZZ()
   Foot_Y_Rel[0] = Len_Length * 0.5 - Foot_Off_Y[0];
   Foot_Hyp_Rel[0] = sqrt(pow(Foot_X_Rel[0],2) + pow(Foot_Y_Rel[0],2));
   Foot_Hyp_Angle[0] = atan(Foot_X_Rel[0] / Foot_Y_Rel[0]);
-  Foot_Off_ZZ_X[0] += Foot_Hyp_Rel[0] * sin(Foot_Hyp_Angle[0] + Off_ZZr) - Foot_X_Rel[0];
-  Foot_Off_ZZ_Y[0] += Foot_Y_Rel[0] - Foot_Hyp_Rel[0] * cos(Foot_Hyp_Angle[0] + Off_ZZr);
+  Foot_Off_ZZ_X[0] = Foot_Hyp_Rel[0] * sin(Foot_Hyp_Angle[0] + Off_ZZr) - Foot_X_Rel[0];
+  Foot_Off_ZZ_Y[0] = Foot_Y_Rel[0] - Foot_Hyp_Rel[0] * cos(Foot_Hyp_Angle[0] + Off_ZZr);
 
   Foot_X_Rel[1] = Len_Width * 0.5 - Foot_Off_X[1];
   Foot_Y_Rel[1] = Len_Length * 0.5 - Foot_Off_Y[1];
   Foot_Hyp_Rel[1] = sqrt(pow(Foot_X_Rel[1],2) + pow(Foot_Y_Rel[1],2));
   Foot_Hyp_Angle[1] = atan(Foot_X_Rel[1] / Foot_Y_Rel[1]);
-  Foot_Off_ZZ_X[1] += Foot_X_Rel[1] - Foot_Hyp_Rel[1] * sin(Foot_Hyp_Angle[1] - Off_ZZr);
-  Foot_Off_ZZ_Y[1] += Foot_Y_Rel[1] - Foot_Hyp_Rel[1] * cos(Foot_Hyp_Angle[1] - Off_ZZr);
+  Foot_Off_ZZ_X[1] = Foot_X_Rel[1] - Foot_Hyp_Rel[1] * sin(Foot_Hyp_Angle[1] - Off_ZZr);
+  Foot_Off_ZZ_Y[1] = Foot_Y_Rel[1] - Foot_Hyp_Rel[1] * cos(Foot_Hyp_Angle[1] - Off_ZZr);
 
   Foot_X_Rel[2] = Len_Width * 0.5 + Foot_Off_X[2];
   Foot_Y_Rel[2] = Len_Length * 0.5 + Foot_Off_Y[2];
   Foot_Hyp_Rel[2] = sqrt(pow(Foot_X_Rel[2],2) + pow(Foot_Y_Rel[2],2));
   Foot_Hyp_Angle[2] = atan(Foot_X_Rel[2] / Foot_Y_Rel[2]);
-  Foot_Off_ZZ_X[2] += Foot_Hyp_Rel[2] * sin(Foot_Hyp_Angle[2] - Off_ZZr) - Foot_X_Rel[2];
-  Foot_Off_ZZ_Y[2] += Foot_Hyp_Rel[2] * cos(Foot_Hyp_Angle[2] - Off_ZZr) - Foot_Y_Rel[2];
+  Foot_Off_ZZ_X[2] = Foot_Hyp_Rel[2] * sin(Foot_Hyp_Angle[2] - Off_ZZr) - Foot_X_Rel[2];
+  Foot_Off_ZZ_Y[2] = Foot_Hyp_Rel[2] * cos(Foot_Hyp_Angle[2] - Off_ZZr) - Foot_Y_Rel[2];
 
   Foot_X_Rel[3] = Len_Width * 0.5 - Foot_Off_X[3];
   Foot_Y_Rel[3] = Len_Length * 0.5 + Foot_Off_Y[3];
   Foot_Hyp_Rel[3] = sqrt(pow(Foot_X_Rel[3],2) + pow(Foot_Y_Rel[3],2));
   Foot_Hyp_Angle[3] = atan(Foot_X_Rel[3] / Foot_Y_Rel[3]);
-  Foot_Off_ZZ_X[3] += Foot_X_Rel[3] - Foot_Hyp_Rel[3] * sin(Foot_Hyp_Angle[3] + Off_ZZr);
-  Foot_Off_ZZ_Y[3] += Foot_Hyp_Rel[3] * cos(Foot_Hyp_Angle[3] + Off_ZZr) - Foot_Y_Rel[3];
+  Foot_Off_ZZ_X[3] = Foot_X_Rel[3] - Foot_Hyp_Rel[3] * sin(Foot_Hyp_Angle[3] + Off_ZZr);
+  Foot_Off_ZZ_Y[3] = Foot_Hyp_Rel[3] * cos(Foot_Hyp_Angle[3] + Off_ZZr) - Foot_Y_Rel[3];
   
 
   if (Offsets_Limit(Foot_Off_X[0] + Foot_Off_ZZ_X[0],Foot_Off_Y[0] + Foot_Off_ZZ_Y[0]) == true) {
@@ -341,241 +443,199 @@ void Offsets_ZZ()
 
 }
 
-// ********************************************** Rewrite
+void Balance_Pos(float lean) // Leans Right
+{
+  Foot_Off_X[0] += lean;
+  Foot_Off_X[1] += lean;
+  Foot_Off_X[2] += lean;
+  Foot_Off_X[3] += lean;
+}
+
+void Balance_Neg(float lean)  // Leans Left
+{
+  Foot_Off_X[0] -= lean;
+  Foot_Off_X[1] -= lean;
+  Foot_Off_X[2] -= lean;
+  Foot_Off_X[3] -= lean;
+}
+
+// Determine if the Leg is close to setpoint position before moving on.
+bool In_Position(int Leg)
+{
+  uint16_t degrees_off = 30; // 1.5d
+  if (abs(Leg_Angle_Measured_Shoulder[Leg - 1] -  Leg_Angle_Setpoint_Shoulder[Leg-1]) <= degrees_off)
+  {
+    if (abs(Leg_Angle_Measured_Upper[Leg - 1] -  Leg_Angle_Setpoint_Upper[Leg-1]) <= degrees_off)
+    {
+      if (abs(Leg_Angle_Measured_Lower[Leg - 1] -  Leg_Angle_Setpoint_Lower[Leg-1]) <= degrees_off)
+      {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void Foot_Lift()
 {
-
   switch (Leg_Active)
   {
-    case 0:
-      // Thinking to set leg_active as 0 when idel for +5sec? Then pick furtest from 0,0
+    case 0: // Set Leg not at zero to active, most likely Leg 1
+      if (int(Foot_Off_X[0]) != 0 || int(Foot_Off_Y[0]) != 0)
+      {
+        Leg_Active = 1;
+        break;
+      }
+      if (int(Foot_Off_X[1]) != 0 || int(Foot_Off_Y[1]) != 0)
+      {
+        Leg_Active = 2;
+        break;
+      }
+      if (int(Foot_Off_X[2]) != 0 || int(Foot_Off_Y[2]) != 0)
+      {
+        Leg_Active = 3;
+        break;
+      }
+      if (int(Foot_Off_X[3]) != 0 || int(Foot_Off_Y[3]) != 0)
+      {
+        Leg_Active = 4;
+        break;
+      }
+      Leg_Active = 0;
       break;
-    case 1:
-      if (Leg_Is_Active == 0 && Offsets_Lift(Foot_Off_X[0],Foot_Off_Y[0]) == true)
+
+    case 1: // Front Left
+      if (Leg_Is_Active == 0)
       {
-        Flag_1 = 0;
-        Leg_Is_Active = 1;
-        Foot_Off_Z[0] -= Lift_Z;
-        Lift_Millis = millis();
+        Flag_1 = 0; // Foot Up
+        Leg_Is_Active = 1; // Set A leg is active flag
+        if (Foot_Off_X[0] <= 0) // Leaning Left?
+        {
+          balance = 1; // Set Ballance Flag to know if return is needed.
+          Balance_Pos(lean); // Balance right
+        }
+        Foot_Off_Z[0] -= Lift_Z; // Lift Foot
+        break;
       }
-      if (Flag_1 == 0 && Lift_Millis > 2500) // Add if in 
+      if (Flag_1 == 0 && In_Position(1) == true) 
       {
-        Foot_Off_X[0] = -Foot_Off_X[0];
-        Foot_Off_Y[0] = -Foot_Off_Y[0];
-        Flag_1 = 1;
-        Lift_Millis = millis();
+        Flag_1 = 1; // Foot Relocating
+        if (Joy_X == 0 && Joy_Y == 0 && Joy_ZZ == 0)
+        {
+          Foot_Off_X[0] = 0;
+          Foot_Off_Y[0] = 0;
+        } else
+        {
+          // Tried to relocate foot opposite of step from location. 
+          // Needs work with Yaw movements.
+          Foot_Off_X[0] = 0; //-Foot_Off_X[0];
+          Foot_Off_Y[0] = 0; //-Foot_Off_Y[0];
+        }
+        break;
       }
-      if (Flag_1 == 1 && Lift_Millis > 4500)
+      if (Flag_1 == 1 && In_Position(1) == true)
       {
-        Foot_Off_Z[0] -= Lift_Z;
-        Flag_1 = 2;
-        Lift_Millis = millis();
-        Leg_Active +=1;
+        if (balance == 1)
+        {
+          balance = 0; // Reset balance flag
+          Balance_Neg(lean); // Lean Left
+        }
+        Foot_Off_Z[0] += Lift_Z; // Lower Foot
+        Flag_1 = 2; // Foot Down
+        break;
       }
-      break;
-    case 2:
-      if (Leg_Is_Active == 0 && Offsets_Lift(Foot_Off_X[1],Foot_Off_Y[1]) == true)
+      if (Flag_1 == 2 && In_Position(1) == true)
       {
-        Flag_2 = 0;
-        Leg_Is_Active = 1;
-        Foot_Off_Z[1] -= Lift_Z;
-        Lift_Millis = millis();
-      }
-      if (Flag_2 == 0 && Lift_Millis > 2500) // Add if in 
-      {
-        Foot_Off_X[1] = -Foot_Off_X[1];
-        Foot_Off_Y[1] = -Foot_Off_Y[1];
-        Flag_2 = 1;
-        Lift_Millis = millis();
-      }
-      if (Flag_2 == 1 && Lift_Millis > 4500)
-      {
-        Foot_Off_Z[1] -= Lift_Z;
-        Flag_2 = 2;
-        Lift_Millis = millis();
-        Leg_Active +=1;
-      }
-      break;
-    case 3:
-      if (Leg_Is_Active == 0 && Offsets_Lift(Foot_Off_X[2],Foot_Off_Y[2]) == true)
-      {
-        Flag_3 = 0;
-        Leg_Is_Active = 1;
-        Foot_Off_Z[2] -= Lift_Z;
-        Lift_Millis = millis();
-      }
-      if (Flag_3 == 0 && Lift_Millis > 2500) // Add if in 
-      {
-        Foot_Off_X[2] = -Foot_Off_X[2];
-        Foot_Off_Y[2] = -Foot_Off_Y[2];
-        Flag_3 = 1;
-        Lift_Millis = millis();
-      }
-      if (Flag_3 == 1 && Lift_Millis > 4500)
-      {
-        Foot_Off_Z[2] -= Lift_Z;
-        Flag_3 = 2;
-        Lift_Millis = millis();
-        Leg_Active +=1;
+        Leg_Active +=1; // Next Foot
+        Leg_Is_Active = 0; // Reset Leg Active Flag
       }
       break;
-    case 4:
-      if (Leg_Is_Active == 0 && Offsets_Lift(Foot_Off_X[3],Foot_Off_Y[3]) == true)
+
+    case 2: // Front Right
+      if (Leg_Is_Active == 0)
       {
-        Flag_4 = 0;
-        Leg_Is_Active = 1;
-        Foot_Off_Z[3] -= Lift_Z;
-        Lift_Millis = millis();
+        Flag_2 = 0; // Foot Up
+        Leg_Is_Active = 1; // Set Leg is active flag
+        if (Foot_Off_X[1] >= 0) // Leaning Right?
+        {
+          balance = 1; // Set Ballance Flag to know if return is needed.
+          Balance_Neg(lean); // Lean Left
+        }
+        Foot_Off_Z[1] -= Lift_Z; // Lift Foot
+        break;
       }
-      if (Flag_4 == 0 && Lift_Millis > 2500) // Add if in 
+      if (Flag_2 == 0 && In_Position(2) == true) 
       {
-        Foot_Off_X[3] = -Foot_Off_X[3];
-        Foot_Off_Y[3] = -Foot_Off_Y[3];
-        Flag_4 = 1;
-        Lift_Millis = millis();
+        Flag_2 = 1; // Foot Relocating
+        if (Joy_X == 0 && Joy_Y == 0 && Joy_ZZ == 0)
+        {
+          Foot_Off_X[1] = 0;
+          Foot_Off_Y[1] = 0;
+        } else
+        {
+          // Tried to relocate foot opposite of step from location. 
+          // Needs work with Yaw movements.
+          Foot_Off_X[1] = 0; //-Foot_Off_X[1];
+          Foot_Off_Y[1] = 0; //-Foot_Off_Y[1];
+        }
+        break;
       }
-      if (Flag_4 == 1 && Lift_Millis > 4500)
+      if (Flag_2 == 1 && In_Position(2) == true)
       {
-        Foot_Off_Z[3] -= Lift_Z;
-        Flag_4 = 2;
-        Lift_Millis = millis();
-        Leg_Active +=1;
+        if (balance == 1)
+        {
+          balance = 0; // Set Ballance Flag to know if return is needed.
+          Balance_Pos(lean);  // Lean Right
+        }
+        Foot_Off_Z[1] += Lift_Z; // Lower Foot
+        Flag_2 = 2; // Foot Down
+        break;
+      }
+      if (Flag_2 == 2 && In_Position(2) == true)
+      {
+        Leg_Active +=1; // Next Foot
+        Leg_Is_Active = 0; // Reset Leg Active Flag
       }
       break;
-    default:
-      Leg_Active = 1;
-      break;
-  }
-  if (Flag_1 == 2 && Flag_2 == 2 && Flag_3 == 2 && Flag_4 == 2 && Lift_Millis > 500)
-  {
-    Leg_Is_Active = 0;
-  }
-  if (Leg_Is_Active == 0 && Lift_Millis > 5000)
-  {
-    //Leg_Active = 0;
-  }
 
-}
-
-        
-
-void LegKinematics(int Leg)
-{
-  // (+) Foot_X, Foot left, robot body right  
-  // (+) Foot_Y, Foot toward rear, robot body forward
-  // (+) Foot_Z, Foot down, robot body up
-
-  float Foot_Z1;
-  float Len_Leg;
-  
-  float Angle_Upper_Off_Y;
-  float Angle_Upper_abs;
-
-  float Leg_Angle_Shoulder_f;
-  float Leg_Angle_Lower_f;
-  float Leg_Angle_Upper_f;
-
-  // Foot_Off_X[Leg]
-  // Foot_Off_Y[Leg]
-  // Foot_Off_Z[Leg]
-
-  Foot_Z1 = sqrt(pow(Foot_Off_Z[Leg],2) + pow(Foot_Off_X[Leg],2));
-  Leg_Angle_Shoulder_f = degrees(atan(Foot_Off_X[Leg] / Foot_Off_Z[Leg])); // Zero is vertical
-
-  Len_Leg = sqrt(pow(Foot_Off_Y[Leg],2) + pow(Foot_Z1,2));
-  Angle_Upper_Off_Y = degrees(atan(Foot_Off_Y[Leg] / Foot_Z1)); // Zero is vertical
-
-  // Angle_Upper measures Len_Leg to Len_Upper.
-  Angle_Upper_abs = degrees(acos((pow(Len_Leg,2) + pow(Len_Upper,2) - pow(Len_Lower,2)) / (2 * Len_Leg * Len_Upper)));
-  Leg_Angle_Lower_f = degrees(acos((pow(Len_Upper,2) + pow(Len_Upper,2) - pow(Len_Leg,2)) / (2 * Len_Upper * Len_Lower)));
-
-  // Angle Upper Adjusted referenced from shoulder axis (horizontal)
-  Leg_Angle_Upper_f = 90 - Angle_Upper_Off_Y - Angle_Upper_abs;
-
-  Leg_Angle_Setpoint_Shoulder[Leg] = int(Leg_Angle_Shoulder_f * 10);
-  Leg_Angle_Setpoint_Upper[Leg] = int(Leg_Angle_Upper_f * 10);
-  Leg_Angle_Setpoint_Lower[Leg] = int(Leg_Angle_Lower_f * 10);
-
-
-}
-
-void Controller_Send(int I2C_ADDR)
-{
-
-  Wire.beginTransmission(I2C_ADDR);
-
-  byte bitArray[2];
-  bitArray[0] = ((Leg_Angle_Setpoint_Shoulder[0]) >> 8) & 0xFF;
-  bitArray[1] = (Leg_Angle_Setpoint_Shoulder[0]) & 0xFF;
-  Wire.write(bitArray, 2);
-  bitArray[0] = (Leg_Angle_Setpoint_Upper[0] >> 8) & 0xFF;
-  bitArray[1] = Leg_Angle_Setpoint_Upper[0] & 0xFF;
-  Wire.write(bitArray, 2);
-  bitArray[0] = (Leg_Angle_Setpoint_Lower[0] >> 8) & 0xFF;
-  bitArray[1] = Leg_Angle_Setpoint_Lower[0] & 0xFF;
-  Wire.write(bitArray, 2);
-
-  bitArray[0] = (Leg_Angle_Setpoint_Shoulder[1] >> 8) & 0xFF;
-  bitArray[1] = Leg_Angle_Setpoint_Shoulder[1] & 0xFF;
-  Wire.write(bitArray, 2);
-  bitArray[0] = (Leg_Angle_Setpoint_Upper[1] >> 8) & 0xFF;
-  bitArray[1] = Leg_Angle_Setpoint_Upper[1] & 0xFF;
-  Wire.write(bitArray, 2);
-  bitArray[0] = (Leg_Angle_Setpoint_Lower[1] >> 8) & 0xFF;
-  bitArray[1] = Leg_Angle_Setpoint_Lower[1] & 0xFF;
-  Wire.write(bitArray, 2);
-  Wire.endTransmission();
-}
-
-void Controller_Read(int I2C_ADDR)
-{
-  int bytes = 12;
-  int available = Wire.requestFrom(I2C_ADDR,bytes);
-  if (available == bytes)
-  {
-    Leg_Angle_Measured_Shoulder[0] = Wire.read() << 8 | Wire.read();
-    Leg_Angle_Measured_Upper[0] = Wire.read() << 8 | Wire.read();
-    Leg_Angle_Measured_Lower[0] = Wire.read() << 8 | Wire.read();
-    Leg_Angle_Measured_Shoulder[1] = Wire.read() << 8 | Wire.read();
-    Leg_Angle_Measured_Upper[1] = Wire.read() << 8 | Wire.read();
-    Leg_Angle_Measured_Lower[1] = Wire.read() << 8 | Wire.read();
-  }
-  Wire.endTransmission();
-}
-
-void loop() {
-  uint32_t p_micros = micros();
-  Blynk.run();
-
-
-  // Position Interval
-	uint32_t Pos_cMicros = micros();
-	if (Pos_cMicros - Pos_pMicros > Pos_Interval)
-	{
-		Pos_pMicros = Pos_cMicros;	//Reset time interval
-    
-    Offsets();
-    Offsets_XY();
-    Offsets_ZZ();
-    
-    //Foot_Lift();
-    
-    for (int cnt = 0; cnt < 4; cnt++)
-    {
-      LegKinematics(cnt);
-    }
- 
-
-    Controller_Send(I2C_ADDR_FRONT);
-    //Controller_Send(2);
-    Controller_Read(I2C_ADDR_FRONT);
-    //Controller_Read(2);
-
-
-    Serial_Print();
-    
-    uint32_t c_micros = micros();
-    Loop_time = c_micros - p_micros;
-  }
-
-}
+    case 3: // Rear Left
+      if (Leg_Is_Active == 0)
+      {
+        Flag_3 = 0; // Foot Up
+        Leg_Is_Active = 1; // Set A leg is active flag
+        if (Foot_Off_X[2] <= 0) // Leaning Left?
+        {
+          balance = 1; // Set Ballance Flag to know if return is needed.
+          Balance_Pos(lean); // Balance right
+        }
+        Foot_Off_Z[2] -= Lift_Z; // Lift Foot
+        break;
+      }
+      if (Flag_3 == 0 && In_Position(3) == true) 
+      {
+        Flag_3 = 1; // Foot Relocating
+        if (Joy_X == 0 && Joy_Y == 0 && Joy_ZZ == 0)
+        {
+          Foot_Off_X[2] = 0;
+          Foot_Off_Y[2] = 0;
+        } else
+        {
+          // Tried to relocate foot opposite of step from location. 
+          // Needs work with Yaw movements.
+          Foot_Off_X[2] = 0; //-Foot_Off_X[2];
+          Foot_Off_Y[2] = 0; //-Foot_Off_Y[2];
+        }
+        break;
+      }
+      if (Flag_3 == 1 && In_Position(3) == true)
+      {
+        if (balance == 1)
+        {
+          balance = 0; // Reset balance flag
+          Balance_Neg(lean); // Lean Left
+        }
+        Foot_Off_Z[2] += Lift_Z; // Lower Foot
+        Flag_3 = 2; // Foot Down
+        break;
+      }
+      if (F
