@@ -4,7 +4,6 @@
   Created:	2021.05.21
 	Revised:	2021.06.20
   Author:   DesignCell (Jeff Underly)
-
 */
 
 #include <Arduino.h>
@@ -21,13 +20,13 @@
 
 // You should get Auth Token in the Blynk App.
 // Go to the Project Settings (nut icon).
-char auth[] = "GinyQKPRF1erjmoWGb6H-FU73tI-NSlB"; // RoboDog
+char auth[] = "APP TOKEN"; // RoboDog
 bool isFirstConnect = true;
 uint8_t blynk_cnt = 1;
 // Your WiFi credentials.
 // Set password to "" for open networks.
-char ssid[] = "NetCell";
-char pass[] = "Sveny;The100%BrownBeaner";
+char ssid[] = "WIFI SSID";
+char pass[] = "WIFI PASSWORD";
 
 // Declarations
 float Len_Length = 312.00; //mm
@@ -638,4 +637,204 @@ void Foot_Lift()
         Flag_3 = 2; // Foot Down
         break;
       }
-      if (F
+      if (Flag_3 == 2 && In_Position(3) == true)
+      {
+        Leg_Active +=1; // Next Leg
+        Leg_Is_Active = 0; // Reset Leg Active Flag
+      }
+      break;
+
+    case 4: // Rear Right
+      if (Leg_Is_Active == 0)
+      {
+        Flag_4 = 0; // Foot Up
+        Leg_Is_Active = 1; // Set Leg is active flag
+        if (Foot_Off_X[3] >= 0) // Leaning Right?
+        {
+          balance = 1; // Set Ballance Flag to know if return is needed.
+          Balance_Neg(lean); // Lean Left
+        }
+        Foot_Off_Z[3] -= Lift_Z; // Lift Foot
+        break;
+      }
+      if (Flag_4 == 0 && In_Position(4) == true) 
+      {
+        Flag_4 = 1; // Foot Relocating
+        if (Joy_X == 0 && Joy_Y == 0 && Joy_ZZ == 0)
+        {
+          Foot_Off_X[3] = 0;
+          Foot_Off_Y[3] = 0;
+        } else
+        {
+          // Tried to relocate foot opposite of step from location. 
+          // Needs work with Yaw movements.
+          Foot_Off_X[3] = 0; //-Foot_Off_X[3];
+          Foot_Off_Y[3] = 0; //-Foot_Off_Y[3];
+        }
+        break;
+      }
+      if (Flag_4 == 1 && In_Position(4) == true)
+      {
+        if (balance == 1)
+        {
+          balance = 0; // Set Ballance Flag to know if return is needed.
+          Balance_Pos(lean);  // Lean Right
+        }
+        Foot_Off_Z[3] += Lift_Z; // Lower Foot
+        Flag_4 = 2; // Foot Down
+        break;
+      }
+      if (Flag_4 == 2 && In_Position(4) == true)
+      {
+        Leg_Active +=1; // Next Leg
+        Leg_Is_Active = 0; // Reset Leg Active Flag
+      }
+      break;
+
+    default:
+      Leg_Active = 0; // If 5 active roll back to 0
+      break;
+  }
+
+}
+
+void LegKinematics(int Leg)
+{
+  // (+) Foot_X, Foot left, robot body right  
+  // (+) Foot_Y, Foot toward rear, robot body forward
+  // (+) Foot_Z, Foot down, robot body up
+
+  float Foot_Z1;
+  float Len_Leg;
+  
+  float Angle_Upper_Off_Y;
+  float Angle_Upper_abs;
+
+  float Leg_Angle_Shoulder_f;
+  float Leg_Angle_Lower_f;
+  float Leg_Angle_Upper_f;
+
+  // Foot_Off_X[Leg]
+  // Foot_Off_Y[Leg]
+  // Foot_Off_Z[Leg]
+
+  Foot_Z1 = sqrt(pow(Foot_Off_Z[Leg],2) + pow(Foot_Off_X[Leg],2));
+  Leg_Angle_Shoulder_f = degrees(atan(Foot_Off_X[Leg] / Foot_Off_Z[Leg])); // Zero is vertical
+
+  Len_Leg = sqrt(pow(Foot_Off_Y[Leg],2) + pow(Foot_Z1,2));
+  Angle_Upper_Off_Y = degrees(atan(Foot_Off_Y[Leg] / Foot_Z1)); // Zero is vertical
+
+  // Angle_Upper measures Len_Leg to Len_Upper.
+  Angle_Upper_abs = degrees(acos((pow(Len_Leg,2) + pow(Len_Upper,2) - pow(Len_Lower,2)) / (2 * Len_Leg * Len_Upper)));
+  Leg_Angle_Lower_f = degrees(acos((pow(Len_Upper,2) + pow(Len_Upper,2) - pow(Len_Leg,2)) / (2 * Len_Upper * Len_Lower)));
+
+  // Angle Upper Adjusted referenced from shoulder axis (horizontal)
+  Leg_Angle_Upper_f = 90 - Angle_Upper_Off_Y - Angle_Upper_abs;
+
+  Leg_Angle_Setpoint_Shoulder[Leg] = int(Leg_Angle_Shoulder_f * 10);
+  Leg_Angle_Setpoint_Upper[Leg] = int(Leg_Angle_Upper_f * 10);
+  Leg_Angle_Setpoint_Lower[Leg] = int(Leg_Angle_Lower_f * 10);
+
+
+}
+
+void Controller_Send(int I2C_ADDR)
+{
+
+  Wire.beginTransmission(I2C_ADDR);
+
+  byte bitArray[2];
+  bitArray[0] = ((Leg_Angle_Setpoint_Shoulder[0 + I2C_ADDR]) >> 8) & 0xFF;
+  bitArray[1] = (Leg_Angle_Setpoint_Shoulder[0 + I2C_ADDR]) & 0xFF;
+  Wire.write(bitArray, 2);
+  bitArray[0] = (Leg_Angle_Setpoint_Upper[0 + I2C_ADDR] >> 8) & 0xFF;
+  bitArray[1] = Leg_Angle_Setpoint_Upper[0 + I2C_ADDR] & 0xFF;
+  Wire.write(bitArray, 2);
+  bitArray[0] = (Leg_Angle_Setpoint_Lower[0 + I2C_ADDR] >> 8) & 0xFF;
+  bitArray[1] = Leg_Angle_Setpoint_Lower[0 + I2C_ADDR] & 0xFF;
+  Wire.write(bitArray, 2);
+
+  bitArray[0] = (Leg_Angle_Setpoint_Shoulder[1 + I2C_ADDR] >> 8) & 0xFF;
+  bitArray[1] = Leg_Angle_Setpoint_Shoulder[1 + I2C_ADDR] & 0xFF;
+  Wire.write(bitArray, 2);
+  bitArray[0] = (Leg_Angle_Setpoint_Upper[1 + I2C_ADDR] >> 8) & 0xFF;
+  bitArray[1] = Leg_Angle_Setpoint_Upper[1 + I2C_ADDR] & 0xFF;
+  Wire.write(bitArray, 2);
+  bitArray[0] = (Leg_Angle_Setpoint_Lower[1 + I2C_ADDR] >> 8) & 0xFF;
+  bitArray[1] = Leg_Angle_Setpoint_Lower[1 + I2C_ADDR] & 0xFF;
+  Wire.write(bitArray, 2);
+
+  bitArray[0] = Btn_Stop;
+  bitArray[1] = Btn_State;
+  Wire.write(bitArray,2);
+
+  byte bitPID[3];
+  bitPID[0] = Kp;
+  bitPID[1] = Ki;
+  bitPID[2] = Kd;
+  Wire.write(bitPID,3);
+
+  Wire.endTransmission();
+}
+
+void Controller_Read(int I2C_ADDR)
+{
+  int bytes = 14;
+  int available = Wire.requestFrom(I2C_ADDR,bytes);
+  if (available == bytes)
+  {
+    Leg_Angle_Measured_Shoulder[0 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    Leg_Angle_Measured_Upper[0 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    Leg_Angle_Measured_Lower[0 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    Leg_Angle_Measured_Shoulder[1 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    Leg_Angle_Measured_Upper[1 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    Leg_Angle_Measured_Lower[1 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+    STM_Loop_Time[0 + I2C_ADDR] = Wire.read() << 8 | Wire.read();
+  }
+  Wire.endTransmission();
+}
+
+void loop() {
+  uint32_t p_micros = micros();
+  Blynk.run();
+
+  // Position Interval
+	uint32_t Pos_cMicros = micros();
+	if (Pos_cMicros - Pos_pMicros > Pos_Interval)
+	{
+		Pos_pMicros = Pos_cMicros;	//Reset time interval
+    
+    Offsets();
+    Offsets_XY();
+    Offsets_ZZ();
+    
+    if (Btn_State == 1)
+    {
+      Foot_Lift();
+    }
+    
+    for (int cnt = 0; cnt < 4; cnt++)
+    {
+      LegKinematics(cnt);
+    }
+ 
+    Controller_Send(I2C_ADDR_FRONT);
+    Controller_Read(I2C_ADDR_FRONT);
+    Controller_Send(I2C_ADDR_REAR);
+    Controller_Read(I2C_ADDR_REAR);
+
+    if (Leg_Angle_Measured_Upper[0] == 0 || Leg_Angle_Measured_Upper[2] == 0) // Reading angles?
+    {
+      Blynk.virtualWrite(V0,0); // Reset Enabled State
+      Blynk.virtualWrite(V1,0); // Reset Enabled State
+      delay(500);
+    }
+
+    #ifdef SERIAL_DEBUG
+    Serial_Print();
+    #endif
+    
+    uint32_t c_micros = micros();
+    Loop_time = c_micros - p_micros;
+  }
+}
